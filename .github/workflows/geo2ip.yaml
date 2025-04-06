@@ -1,0 +1,62 @@
+name: IP2Country
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Runs every Sunday at midnight (UTC). Adjust as needed.
+  workflow_dispatch:  # Allows manual triggering of the workflow
+
+jobs:
+  retrieve_and_convert_country_data:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Fetch full history to enable resetting it
+
+    - name: Install wget and gzip
+      run: sudo apt-get update && sudo apt-get install -y wget gzip
+
+    - name: Download and Save Country Data as country.csv.gz
+      env:
+        IPINFO_TOKEN: ${{ secrets.IPINFO_TOKEN }}
+      run: wget -O country.csv.gz "https://ipinfo.io/data/free/country.csv.gz?token=${IPINFO_TOKEN}"
+
+    - name: Create IP2Country Directory
+      run: mkdir -p IP2Country
+
+    - name: Calculate number of lines and split into two
+      run: |
+        total_lines=$(zcat country.csv.gz | wc -l)   # Get total number of lines
+        half_lines=$((total_lines / 2))              # Calculate half the lines
+
+        # Split the file into exactly two parts
+        zcat country.csv.gz | head -n $half_lines > IP2Country/country_part1.csv
+        zcat country.csv.gz | tail -n +$((half_lines + 1)) > IP2Country/country_part2.csv
+
+    - name: Remove any intermediate files (cleanup)
+      run: rm -f country.csv.gz
+
+    - name: Commit and Push split files
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add IP2Country/country_part1.csv IP2Country/country_part2.csv
+        git commit -m "Update country data and split into two parts"
+        git push
+
+    - name: Reset commit history while preserving files
+      run: |
+        # Make sure all changes are committed
+        git checkout --orphan temp-branch      # Create a new orphan branch with no history
+        git add .                              # Add all current files to the new branch
+        git commit -m "Reset commit history and preserve files"
+        git branch -D main                     # Delete the old main branch
+        git branch -m main                     # Rename temp-branch to main
+        git push --force origin main           # Force push to replace history
+
+    - name: Clean up Git space (optional)
+      run: |
+        git reflog expire --expire=now --all
+        git gc --prune=now --aggressive
